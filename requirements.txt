@@ -1,0 +1,9 @@
+anthropic>=0.34.0
+pillow>=10.0.0
+pandas>=2.0.0
+openpyxl>=3.1.2
+python-dateutil>=2.8.2
+tqdm>=4.66.0
+# Optional (uncomment to use extra preprocessing)
+# opencv-python>=4.8.0
+# numpy>=1.25.0

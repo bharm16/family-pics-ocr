@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# OS
+.DS_Store
+
+# Logs
+photo_ocr.log
+
+# Outputs
+ocr_results/

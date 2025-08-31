@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "family-pics-ocr"
+version = "0.1.0"
+description = "Adaptive OCR for family photos using Claude vision"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Family OCR" }]
+dependencies = [
+  "anthropic>=0.34.0",
+  "pillow>=10.0.0",
+  "pandas>=2.0.0",
+  "openpyxl>=3.1.2",
+  "python-dateutil>=2.8.2",
+  "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+preprocess = [
+  "opencv-python>=4.8.0",
+  "numpy>=1.25.0",
+]
+
+[project.scripts]
+family-pics-ocr = "family_pics_ocr.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = ["family_pics_ocr"]
