@@ -6,10 +6,11 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps
 import time, random
 from dateutil import parser as date_parser
 from datetime import datetime as dt
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +19,40 @@ class ImagePreprocessor:
     """Handles image optimization for OCR processing"""
 
     @staticmethod
-    def optimize_image(image_path: str, max_size: Tuple[int, int] = (2048, 2048)) -> bytes:
+    def optimize_image(
+        image_path: str,
+        side: str = "unknown",
+        max_size: Tuple[int, int] = (3072, 3072),
+    ) -> Tuple[bytes, str]:
         try:
             with Image.open(image_path) as img:
-                if img.mode not in ('RGB', 'L'):
-                    img = img.convert('RGB')
-                img.thumbnail(max_size, Image.Resampling.LANCZOS)
-                enhancer = ImageEnhance.Contrast(img)
-                img = enhancer.enhance(1.2)
+                # Correct orientation using EXIF
+                img = ImageOps.exif_transpose(img)
+
+                # Color mode by side
+                if side == 'back':
+                    if img.mode != 'L':
+                        img = img.convert('L')
+                else:
+                    if img.mode not in ('RGB', 'L'):
+                        img = img.convert('RGB')
+
+                # Resize only if extremely large; preserve detail
+                if max(img.size) > max_size[0]:
+                    img.thumbnail(max_size, Image.Resampling.LANCZOS)
+
+                # Very light contrast only on backs to aid stamped codes
+                if side == 'back':
+                    try:
+                        enhancer = ImageEnhance.Contrast(img)
+                        img = enhancer.enhance(1.1)
+                    except Exception:
+                        pass
+
+                # Encode as PNG (lossless) to avoid artifacts that can alter digits
                 buffer = io.BytesIO()
-                img.save(buffer, format='JPEG', quality=95, optimize=True)
-                return buffer.getvalue()
+                img.save(buffer, format='PNG', optimize=True)
+                return buffer.getvalue(), 'image/png'
         except Exception as e:
             logger.error(f"Error preprocessing image {image_path}: {e}")
             raise
@@ -122,7 +146,7 @@ class PatternLibrary:
 class AdaptivePhotoOCR:
     """Flexible OCR engine that adapts to any text format found"""
 
-    def __init__(self, client, model: str = "claude-sonnet-4-20250514", request_max_retries: int = 6,
+    def __init__(self, client, model: str = "gpt-4o", request_max_retries: int = 6,
                  backoff_base: float = 0.8, backoff_max: float = 30.0):
         self.client = client
         self.model = model
@@ -134,35 +158,28 @@ class AdaptivePhotoOCR:
 
     def extract_text(self, image_path: str, side: str = "unknown") -> Dict:
         try:
-            image_bytes = self.preprocessor.optimize_image(image_path)
+            image_bytes, media_type = self.preprocessor.optimize_image(image_path, side=side)
             base64_image = self.preprocessor.encode_image(image_bytes)
             prompt = self._create_adaptive_prompt(side)
+
+            # Build OpenAI chat content with base64 image
+            content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{base64_image}"}},
+            ]
 
             # Use configured model with retry on overload/timeouts
             last_err = None
             response = None
             for attempt in range(self.request_max_retries):
                 try:
-                    response = self.client.messages.create(
+                    response = self.client.chat.completions.create(
                         model=self.model,
-                        max_tokens=2048,
                         messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "image",
-                                        "source": {
-                                            "type": "base64",
-                                            "media_type": "image/jpeg",
-                                            "data": base64_image
-                                        }
-                                    },
-                                    {"type": "text", "text": prompt}
-                                ]
-                            }
+                            {"role": "system", "content": "You are an OCR transcriber. Return only exact text from the image. No commentary or code blocks. Preserve digits, spaces, and punctuation exactly as printed."},
+                            {"role": "user", "content": content}
                         ],
-                        temperature=0.1
+                        temperature=0.0
                     )
                     break
                 except Exception as e:
@@ -176,9 +193,13 @@ class AdaptivePhotoOCR:
                         continue
                     raise
             if response is None:
-                raise last_err if last_err else RuntimeError("Claude API call failed without error")
+                raise last_err if last_err else RuntimeError("OpenAI API call failed without error")
 
-            raw_response = response.content[0].text if getattr(response, 'content', None) else str(response)
+            # Extract text from OpenAI chat.completions response
+            try:
+                raw_response = response.choices[0].message.content or ""
+            except Exception:
+                raw_response = str(response)
             result = {
                 'source_file': image_path,
                 'side': side,
@@ -194,26 +215,27 @@ class AdaptivePhotoOCR:
     def _create_adaptive_prompt(self, side: str) -> str:
         if side == "front":
             return (
-                "Look at this photo and extract ALL visible text exactly as shown. Include:"
+                "Extract ALL visible text exactly as printed on the photo. Include:"
                 "\n- Any captions or titles"
                 "\n- Text on borders or frames"
                 "\n- Stamps or watermarks"
                 "\n- Any printed or handwritten text visible on the photo itself"
                 "\n- Studio or photographer marks"
                 "\n- Any numbers, codes, or identifiers\n\n"
-                "Return ONLY text elements, no explanations or intros."
-                " List each on a new line. Optional short location prefix like 'top left corner:' is allowed."
+                "Return ONLY text elements, one per line. No commentary, no code blocks."
+                " If a date overlay is present, transcribe exactly (e.g., 25 6 95 or 26 6 95)."
+                " Do NOT insert dots or punctuation that are not present."
             )
         elif side == "back":
             return (
-                "Look at this photo back and extract ALL visible text exactly as shown. Include:"
+                "Extract ALL visible text exactly as printed/written on the back. Include:"
                 "\n- Any handwritten notes or annotations"
                 "\n- Printed stamps or marks"
                 "\n- Codes, numbers, or identifiers (preserve exact brackets/dashes)"
                 "\n- Dates in any format"
                 "\n- Names or descriptions"
                 "\n- Developer/processor marks\n\n"
-                "Return ONLY text elements, no explanations or intros. List each on a new line."
+                "Return ONLY text elements, no explanations. One item per line."
             )
         else:
             return (

@@ -1,12 +1,12 @@
 Family Pictures OCR (Claude API)
 
 Overview
-- Adaptive OCR pipeline to extract all visible text from family photo fronts/backs using Claude vision.
+- Adaptive OCR pipeline to extract all visible text from family photo fronts/backs using OpenAI vision (gpt-4o family).
 - Learns recurring patterns (codes, dates) and exports results to CSV/Excel/JSON with a pattern report.
 
 Quick Start
 - Python 3.9+
-- Set env var `ANTHROPIC_API_KEY` to your Claude API key.
+- Set env var `OPENAI_API_KEY` to your OpenAI API key.
 - Option A (recommended): install package for CLI
   - `pip install -e .`
   - Run: `family-pics-ocr --image photos/test.jpg --side back`
@@ -30,5 +30,5 @@ Notes
 - The pipeline keeps prompts simple and open-ended to capture every text element without assumptions.
  
 Environment
-- Create `.env` or export: `export ANTHROPIC_API_KEY=your-key`
-- Claude model default: `claude-sonnet-4-20250514` (configurable via `--model`)
+- Create `.env` or export: `export OPENAI_API_KEY=your-key`
+- Default model: `gpt-4o` (configurable via `--model`, e.g., `gpt-4o-mini`)
